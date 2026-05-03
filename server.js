@@ -23,16 +23,57 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-const analysisHistory = [];
+// ── Pages ──────────────────────────────────────────────────────────────────
 
 app.get('/', (req, res) => res.render('index'));
 
-app.get('/history', (req, res) => res.json(analysisHistory.slice(-20).reverse()));
+// ── History & Stats (proxied from Python/DB) ───────────────────────────────
 
-app.delete('/history', (req, res) => {
-    analysisHistory.length = 0;
-    res.json({ success: true });
+app.get('/history', async (req, res) => {
+    try {
+        const limit = req.query.limit || 20;
+        const response = await axios.get(`${PYTHON_URL}/history?limit=${limit}`);
+        res.json(response.data);
+    } catch (error) {
+        res.status(500).json({ error: error.response?.data?.detail || error.message });
+    }
 });
+
+app.delete('/history', async (req, res) => {
+    try {
+        const response = await axios.delete(`${PYTHON_URL}/history`);
+        res.json(response.data);
+    } catch (error) {
+        res.status(500).json({ error: error.response?.data?.detail || error.message });
+    }
+});
+
+app.get('/stats', async (req, res) => {
+    try {
+        const response = await axios.get(`${PYTHON_URL}/stats`);
+        res.json(response.data);
+    } catch (error) {
+        res.status(500).json({ error: error.response?.data?.detail || error.message });
+    }
+});
+
+// ── CSV Export ─────────────────────────────────────────────────────────────
+
+app.get('/export/csv', async (req, res) => {
+    try {
+        const limit = req.query.limit || 100;
+        const response = await axios.get(`${PYTHON_URL}/export/csv?limit=${limit}`, {
+            responseType: 'stream'
+        });
+        res.setHeader('Content-Type', 'text/csv');
+        res.setHeader('Content-Disposition', 'attachment; filename=crowd_analysis.csv');
+        response.data.pipe(res);
+    } catch (error) {
+        res.status(500).json({ error: error.response?.data?.detail || error.message });
+    }
+});
+
+// ── Upload Image ───────────────────────────────────────────────────────────
 
 app.post('/upload', upload.single('file'), async (req, res) => {
     try {
@@ -49,30 +90,22 @@ app.post('/upload', upload.single('file'), async (req, res) => {
         });
 
         res.json(response.data);
-
-        analysisHistory.push({
-            id: Date.now(),
-            type: 'image',
-            filename: req.file.originalname,
-            person_count: response.data.person_count,
-            car_count: response.data.car_count,
-            density_level: response.data.density_level,
-            avg_confidence: response.data.avg_confidence,
-            alert: response.data.alert,
-            timestamp: new Date().toLocaleString(),
-            thumbnail: response.data.output_image
-        });
     } catch (error) {
         res.status(500).json({ error: error.response?.data?.detail || error.message });
     }
 });
+
+// ── Upload Video ───────────────────────────────────────────────────────────
 
 app.post('/upload-video', upload.single('file'), async (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
         const formData = new FormData();
-        formData.append('file', req.file.buffer, { filename: req.file.originalname, contentType: req.file.mimetype });
+        formData.append('file', req.file.buffer, {
+            filename: req.file.originalname,
+            contentType: req.file.mimetype
+        });
 
         const response = await axios.post(`${PYTHON_URL}/upload-video`, formData, {
             headers: formData.getHeaders(),
@@ -82,41 +115,38 @@ app.post('/upload-video', upload.single('file'), async (req, res) => {
         });
 
         res.json(response.data);
-
-        analysisHistory.push({
-            id: Date.now(),
-            type: 'video',
-            filename: req.file.originalname,
-            person_count: response.data.max_persons,
-            car_count: response.data.max_cars,
-            density_level: response.data.density_level,
-            avg_confidence: '-',
-            alert: response.data.alert,
-            timestamp: new Date().toLocaleString(),
-            thumbnail: response.data.preview_image
-        });
     } catch (error) {
         res.status(500).json({ error: error.response?.data?.detail || error.message });
     }
 });
 
+// ── Webcam Frame ───────────────────────────────────────────────────────────
+
 app.post('/webcam-frame', upload.single('file'), async (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ error: 'No frame received' });
+
         const formData = new FormData();
-        formData.append('file', req.file.buffer, { filename: 'frame.jpg', contentType: 'image/jpeg' });
+        formData.append('file', req.file.buffer, {
+            filename: 'frame.jpg',
+            contentType: 'image/jpeg'
+        });
         const threshold = req.query.threshold || 10;
+
         const response = await axios.post(`${PYTHON_URL}/webcam-frame?threshold=${threshold}`, formData, {
             headers: formData.getHeaders(),
             maxContentLength: Infinity,
             maxBodyLength: Infinity,
             timeout: 15000
         });
+
         res.json(response.data);
     } catch (error) {
         res.status(500).json({ error: error.response?.data?.detail || error.message });
     }
 });
+
+// ── Start ──────────────────────────────────────────────────────────────────
 
 function waitForPython(retries = 15) {
     axios.get(`${PYTHON_URL}/health`)

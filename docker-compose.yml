@@ -1,0 +1,37 @@
+version: "3.9"
+
+services:
+  python-api:
+    build: .
+    container_name: crowd_python_api
+    ports:
+      - "8001:8001"
+    volumes:
+      - db_data:/app/../data
+      - logs_data:/app/../logs
+    environment:
+      - API_HOST=0.0.0.0
+      - API_PORT=8001
+      - DATABASE_PATH=/data/crowd_counting.db
+      - LOG_FILE=/logs/app.log
+    restart: unless-stopped
+
+  node-frontend:
+    image: node:20-alpine
+    container_name: crowd_node_frontend
+    working_dir: /app
+    ports:
+      - "3000:3000"
+    volumes:
+      - .:/app
+    environment:
+      - PORT=3000
+      - PYTHON_API_URL=http://python-api:8001
+    command: sh -c "npm install && node server.js"
+    depends_on:
+      - python-api
+    restart: unless-stopped
+
+volumes:
+  db_data:
+  logs_data:

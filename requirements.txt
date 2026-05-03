@@ -1,6 +1,8 @@
 fastapi
-uvicorn
+uvicorn[standard]
 opencv-python
 numpy
 ultralytics
 python-multipart
+deepface
+python-dotenv
